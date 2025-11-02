@@ -47,7 +47,7 @@ pvcodes = CF_TC.CF_TC()
 cid = console.input("Enter the [bold green]Contest ID[/]: ")
 
 # pid = str(input("Enter problem index (A-G or 1-8): "))
-pid = console.input("Enter the [bold green]problem index[/] \[A-G]: ")
+pid = console.input("Enter the [bold green]problem index[/] [A-G]: ")
 
 # res return a tuple of (status, TCs) if status is True, else (None, error_msg)
 pid = check_pid(pid)
