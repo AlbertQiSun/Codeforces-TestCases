@@ -120,18 +120,34 @@ class CF_TC:
             console.log("verdictName not found")
             return (None, "Error while filtering problem verdict")
 
+        # Wait a bit more for the page to update after filtering
+        time.sleep(5)
+
         # Try multiple XPaths for submission link
         link_found = False
-        for xpath in [
+        xpaths = [
+            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[1]/td[1]/a",  # Try tr[1]
             "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a",
+            "//table//tbody//tr[1]//td[1]//a",
             "//table//tbody//tr[2]//td[1]//a",
             "//a[contains(@href, '/submission/')]",
-        ]:
-            if self.wait_till_load(xpath, 10):
+            "//td[@class='id']//a",  # Common class for ID column
+        ]
+        for xpath in xpaths:
+            if self.wait_till_load(xpath, 5):
                 content = self.driver.find_element(By.XPATH, xpath)
                 console.log(f"Found submission ID: {content.text} using {xpath}")
                 return (True, content.text)
         console.log("Submission link not found with any XPath")
+        # Debug: print some page source
+        try:
+            table = self.driver.find_elements(By.XPATH, "//table//tbody//tr")
+            console.log(f"Found {len(table)} table rows")
+            if table:
+                first_row = table[0].text
+                console.log(f"First row text: {first_row[:100]}...")
+        except Exception as e:
+            console.log(f"Error checking table: {e}")
         return (None, "Error while finding Submission ID ")
 
     def get_testcases(self, contest_id, problem_num):
