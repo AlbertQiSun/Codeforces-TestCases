@@ -23,8 +23,9 @@ class CF_TC:
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        # undetected-chromedriver handles stealth automatically
-        self.driver = uc.Chrome(options=options, version_main=None)  # Use latest version
+        # Remove headless to allow manual interaction if needed
+        # options.add_argument("--headless")
+        self.driver = uc.Chrome(options=options, version_main=None)
         self.base_url = "https://codeforces.com/"
         self.close = self.driver.close
 
@@ -53,8 +54,12 @@ class CF_TC:
         # Get to the contest submission page
         self.driver.get(f"{self.base_url}contest/{contest_id}/status")
 
-        # Wait a bit for Cloudflare to pass
-        time.sleep(5)
+        # Wait longer for Cloudflare to pass
+        time.sleep(10)
+        # Check if still on challenge page
+        if "Just a moment" in self.driver.title or "Verify you are human" in self.driver.page_source:
+            console.log("Still on Cloudflare challenge, waiting longer...")
+            time.sleep(20)
 
         # Debug: print page title
         console.log(f"Page title: {self.driver.title}")
@@ -93,36 +98,41 @@ class CF_TC:
             verdict.select_by_index(1)
             console.log("Verdict filter applied")
 
-            if self.wait_till_load(
-                "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]", 10
-            ):
-                apply_btn = self.driver.find_element(
-                    By.XPATH,
-                    "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]",
-                )
-                apply_btn.click()
-                time.sleep(3)
-                console.log("Apply button clicked")
-            else:
-                console.log("Apply button not found")
+            # Try multiple ways to find the apply button
+            apply_found = False
+            for xpath in [
+                "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]",
+                "//input[@value='Apply']",
+                "//input[@type='submit']",
+                "//button[contains(text(), 'Apply')]",
+            ]:
+                if self.wait_till_load(xpath, 5):
+                    apply_btn = self.driver.find_element(By.XPATH, xpath)
+                    apply_btn.click()
+                    time.sleep(3)
+                    console.log(f"Apply button clicked using {xpath}")
+                    apply_found = True
+                    break
+            if not apply_found:
+                console.log("Apply button not found with any XPath")
                 return (None, "Error while clicking apply button")
         else:
             console.log("verdictName not found")
             return (None, "Error while filtering problem verdict")
 
-        if self.wait_till_load(
-            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a", 10
-        ):
-            content = self.driver.find_element(
-                By.XPATH,
-                "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a",
-            )
-            console.log(f"Found submission ID: {content.text}")
-            return (True, content.text)
-
-        else:
-            console.log("Submission link not found")
-            return (None, "Error while finding Submission ID ")
+        # Try multiple XPaths for submission link
+        link_found = False
+        for xpath in [
+            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a",
+            "//table//tbody//tr[2]//td[1]//a",
+            "//a[contains(@href, '/submission/')]",
+        ]:
+            if self.wait_till_load(xpath, 10):
+                content = self.driver.find_element(By.XPATH, xpath)
+                console.log(f"Found submission ID: {content.text} using {xpath}")
+                return (True, content.text)
+        console.log("Submission link not found with any XPath")
+        return (None, "Error while finding Submission ID ")
 
     def get_testcases(self, contest_id, problem_num):
         problem_exist = self._isProblemExists(contest_id, problem_num)
@@ -141,7 +151,10 @@ class CF_TC:
         )
 
         # Wait for Cloudflare
-        time.sleep(5)
+        time.sleep(10)
+        if "Just a moment" in self.driver.title or "Verify you are human" in self.driver.page_source:
+            console.log("Still on Cloudflare challenge for submission, waiting longer...")
+            time.sleep(20)
 
         if self.wait_till_load("/html/body/div[6]/div[4]/div/div[4]/div[2]/a", 10):
             click_btn = self.driver.find_element(
