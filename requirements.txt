@@ -1,6 +1,3 @@
 Requests
 selenium
 rich
-cloudscraper
-beautifulsoup4
-lxml

@@ -2,9 +2,14 @@ import json
 import time
 from typing import List, Tuple, Optional
 
-import cloudscraper
 import requests
-from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import Select
 
 # For terminal beatify
 from rich.console import Console
@@ -14,135 +19,92 @@ console = Console()
 
 class CF_TC:
     def __init__(self):
+        chrome_options = Options()
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+        chrome_options.add_argument("--accept-lang=en-US,en;q=0.9")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        self.driver = webdriver.Chrome(options=chrome_options)
+        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         self.base_url = "https://codeforces.com/"
-        self.scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "darwin", "mobile": False})
+        self.close = self.driver.close
 
     def _isProblemExists(self, contest_id, problem_index):
         url = f"{self.base_url}api/contest.standings?contestId={contest_id}&from=1&count=1"
-        try:
-            r = self.scraper.get(url)
-            r.raise_for_status()
-            data = r.json()
-        except Exception as e:
-            return (None, f"Failed to query Codeforces API: {e}")
+        r = requests.get(url)
+        r = r.json()
+        # r = json.loads(r)
 
-        if data.get("status") != "OK":
-            return (None, "Codeforces API returned non-OK status")
+        if r["status"] != "OK":
+            x = str(
+                input("Codeforces API is down.\nDo you still want to continue (y/n): ")
+            )
+            if x == "n":
+                return (None, "Codeforces API is down")
 
-        for problem in data.get("result", {}).get("problems", []):
-            if str(problem_index) == problem.get("index"):
+        for i in r["result"]["problems"]:
+            if str(problem_index) == i["index"]:
                 return (True, "Problem found")
 
-        return (None, "Problem does not exist")
+        return (None, "Problem does not exists")
 
-    def _get_accepted_submission_id(self, contest_id: str, problem_index: str) -> Tuple[Optional[bool], str]:
-        # Use Codeforces API to find an OK verdict submission for the problem
-        # Iterate pages of 100 submissions up to a sensible limit
-        from_offset = 1
-        page_size = 100
-        max_checks = 10
-        for _ in range(max_checks):
-            url = f"{self.base_url}api/contest.status?contestId={contest_id}&from={from_offset}&count={page_size}"
-            try:
-                r = self.scraper.get(url)
-                r.raise_for_status()
-                data = r.json()
-            except Exception as e:
-                return (None, f"Failed to query submissions: {e}")
+        # https://codeforces.com/api/contest.standings?contestId=566&from=1&count=1
 
-            if data.get("status") != "OK":
-                return (None, "Codeforces API returned non-OK status for submissions")
+    def _getSubmissionID(self, contest_id, problem_index):
+        # Get to the contest submission page
+        self.driver.get(f"{self.base_url}contest/{contest_id}/status")
 
-            submissions = data.get("result", [])
-            if not submissions:
-                break
+        # Wait a bit for Cloudflare to pass
+        time.sleep(5)
 
-            # Prefer newest OK submission for this problem
-            for sub in submissions:
-                problem = sub.get("problem", {})
-                verdict = sub.get("verdict")
-                if problem.get("index") == str(problem_index) and verdict == "OK":
-                    return (True, str(sub.get("id")))
+        # applying filters for the problem and verdict to be `accepted`
+        if self.wait_till_load('//*[@id="frameProblemIndex"]'):
+            select = Select(
+                self.driver.find_element(By.XPATH, '//*[@id="frameProblemIndex"]')
+            )
 
-            from_offset += page_size
+            select.select_by_index(ord(problem_index) - ord("A") + 1)
 
-        return (None, "No accepted submissions found for this problem")
+        else:
+            return (None, "Error while filtering problem index")
 
-    def _parse_tests_from_submission_html(self, html: str) -> List[Tuple[str, str]]:
-        soup = BeautifulSoup(html, "lxml")
+        if self.wait_till_load('//*[@id="verdictName"]'):
+            verdict = Select(
+                self.driver.find_element(By.XPATH, '//*[@id="verdictName"]')
+            )
 
-        # Try a few plausible containers where tests may appear
-        tests: List[Tuple[str, str]] = []
+            verdict.select_by_index(1)
 
-        # 1) Common pattern: paired divs with classes input/output (as used on CF pages)
-        input_divs = soup.select("div.input pre")
-        output_divs = soup.select("div.output pre")
-        if input_divs and output_divs and len(input_divs) == len(output_divs):
-            for i_pre, o_pre in zip(input_divs, output_divs):
-                in_text = i_pre.get_text("\n", strip=False)
-                out_text = o_pre.get_text("\n", strip=False)
-                tests.append((in_text, out_text))
-            return tests
+            if self.wait_till_load(
+                "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]"
+            ):
+                apply_btn = self.driver.find_element(
+                    By.XPATH,
+                    "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]",
+                )
+                apply_btn.click()
+                time.sleep(3)
+        else:
+            return (None, "Error while filtering problem verdict")
 
-        # 2) Alternative layout: elements with class names 'input'/'output' directly
-        input_divs = soup.select(".input")
-        output_divs = soup.select(".output")
-        if input_divs and output_divs and len(input_divs) == len(output_divs):
-            for i_div, o_div in zip(input_divs, output_divs):
-                in_text = i_div.get_text("\n", strip=False)
-                out_text = o_div.get_text("\n", strip=False)
-                tests.append((in_text, out_text))
-            return tests
+        if self.wait_till_load(
+            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a"
+        ):
+            content = self.driver.find_element(
+                By.XPATH,
+                "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a",
+            )
+            return (True, content.text)
 
-        return tests
-
-    def _fetch_tests_from_submission(self, contest_id: str, submission_id: str) -> Tuple[Optional[bool], List[Tuple[str, str]]]:
-        url = f"{self.base_url}contest/{contest_id}/submission/{submission_id}"
-        try:
-            r = self.scraper.get(url)
-            r.raise_for_status()
-        except Exception as e:
-            return (None, [f"Failed to load submission page: {e}"])
-
-        tests = self._parse_tests_from_submission_html(r.text)
-        if tests:
-            return (True, tests)
-
-        return (None, ["No tests visible on submission page (may require login or unavailable)"])
-
-    def _fetch_sample_tests_from_problem(self, contest_id: str, problem_index: str) -> Tuple[Optional[bool], List[Tuple[str, str]]]:
-        # Try both contest and problemset paths
-        urls = [
-            f"{self.base_url}contest/{contest_id}/problem/{problem_index}",
-            f"{self.base_url}problemset/problem/{contest_id}/{problem_index}",
-        ]
-
-        last_error = None
-        for url in urls:
-            try:
-                r = self.scraper.get(url)
-                r.raise_for_status()
-                soup = BeautifulSoup(r.text, "lxml")
-                sample = soup.select_one("div.sample-test")
-                if not sample:
-                    continue
-                input_blocks = sample.select("div.input pre")
-                output_blocks = sample.select("div.output pre")
-                tests: List[Tuple[str, str]] = []
-                # Some problems may have unequal numbers; pair by min length
-                for i_pre, o_pre in zip(input_blocks, output_blocks):
-                    in_text = i_pre.get_text("\n", strip=False)
-                    out_text = o_pre.get_text("\n", strip=False)
-                    tests.append((in_text, out_text))
-                if tests:
-                    return (True, tests)
-            except Exception as e:
-                last_error = str(e)
-                continue
-
-        if last_error:
-            return (None, [f"Failed to load problem page: {last_error}"])
-        return (None, ["No sample tests found on problem page"]) 
+        else:
+            return (None, "Error while finding Submission ID ")
 
     def get_testcases(self, contest_id, problem_num):
         problem_exist = self._isProblemExists(contest_id, problem_num)
@@ -151,21 +113,46 @@ class CF_TC:
 
         console.log("Found the problem")
 
-        sub_res = self._get_accepted_submission_id(contest_id, problem_num)
-        if sub_res[0]:
-            submission_id = sub_res[1]
-            console.log(f"Found accepted submission: {submission_id}")
-            tests_res = self._fetch_tests_from_submission(contest_id, submission_id)
-            if tests_res[0] and tests_res[1]:
-                console.log(f"Total test cases found from submission: {len(tests_res[1])}")
-                return (True, tests_res[1])
+        submission_id = self._getSubmissionID(contest_id, problem_num)
 
-        # Fallback to sample tests from the problem statement
-        console.log("Falling back to sample tests from problem page")
-        samples_res = self._fetch_sample_tests_from_problem(contest_id, problem_num)
-        if samples_res[0] and samples_res[1]:
-            console.log(f"Total sample test cases found: {len(samples_res[1])}")
-            return (True, samples_res[1])
+        if not submission_id[0]:
+            return submission_id
 
-        # If nothing worked, return a consolidated error
-        return (None, "Unable to retrieve test cases from submission or problem page")
+        self.driver.get(
+            f"https://codeforces.com/contest/{contest_id}/submission/{submission_id[1]}"
+        )
+
+        # Wait for Cloudflare
+        time.sleep(5)
+
+        if self.wait_till_load("/html/body/div[6]/div[4]/div/div[4]/div[2]/a", 10):
+            click_btn = self.driver.find_element(
+                By.XPATH, "/html/body/div[6]/div[4]/div/div[4]/div[2]/a"
+            )
+
+            click_btn.click()
+            time.sleep(3)
+
+        if self.wait_till_load("/html/body/div[6]/div[4]/div/div[4]/div[3]", 10):
+            input = self.driver.find_elements(By.CLASS_NAME, "input")
+            output = self.driver.find_elements(By.CLASS_NAME, "output")
+
+            tc = []
+            for i in range(len(input)):
+                tc.append((input[i].text, output[i].text))
+            tc = tc[1:]
+            console.log(f"Total test cases found : {len(tc)}")
+            return (True, tc)
+
+        return (None, "Error while finding test cases")
+
+    def wait_till_load(self, xpath_value, delay=3):
+        try:
+            myElem = WebDriverWait(self.driver, delay).until(
+                EC.presence_of_element_located((By.XPATH, xpath_value))
+            )
+            # print("Page is ready!")
+            return 1
+        except TimeoutException:
+            # print("Loading took too much time!")
+            return 0
