@@ -3,9 +3,8 @@ import time
 from typing import List, Tuple, Optional
 
 import requests
-from selenium import webdriver
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
@@ -19,20 +18,13 @@ console = Console()
 
 class CF_TC:
     def __init__(self):
-        chrome_options = Options()
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
-        chrome_options.add_argument("--accept-lang=en-US,en;q=0.9")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        self.driver = webdriver.Chrome(options=chrome_options)
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        options = uc.ChromeOptions()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        # undetected-chromedriver handles stealth automatically
+        self.driver = uc.Chrome(options=options, version_main=None)  # Use latest version
         self.base_url = "https://codeforces.com/"
         self.close = self.driver.close
 
@@ -64,26 +56,45 @@ class CF_TC:
         # Wait a bit for Cloudflare to pass
         time.sleep(5)
 
+        # Debug: print page title
+        console.log(f"Page title: {self.driver.title}")
+
         # applying filters for the problem and verdict to be `accepted`
-        if self.wait_till_load('//*[@id="frameProblemIndex"]'):
+        if self.wait_till_load('//*[@id="frameProblemIndex"]', 10):
             select = Select(
                 self.driver.find_element(By.XPATH, '//*[@id="frameProblemIndex"]')
             )
 
             select.select_by_index(ord(problem_index) - ord("A") + 1)
+            console.log("Problem filter applied")
 
         else:
-            return (None, "Error while filtering problem index")
+            console.log("frameProblemIndex not found, trying alternatives")
+            # Try alternative XPaths
+            alternatives = [
+                '//*[@name="frameProblemIndex"]',
+                '//select[@id="frameProblemIndex"]',
+                '//select[contains(@id, "problem")]',
+            ]
+            for alt in alternatives:
+                if self.wait_till_load(alt, 5):
+                    select = Select(self.driver.find_element(By.XPATH, alt))
+                    select.select_by_index(ord(problem_index) - ord("A") + 1)
+                    console.log(f"Used alternative XPath: {alt}")
+                    break
+            else:
+                return (None, "Error while filtering problem index")
 
-        if self.wait_till_load('//*[@id="verdictName"]'):
+        if self.wait_till_load('//*[@id="verdictName"]', 10):
             verdict = Select(
                 self.driver.find_element(By.XPATH, '//*[@id="verdictName"]')
             )
 
             verdict.select_by_index(1)
+            console.log("Verdict filter applied")
 
             if self.wait_till_load(
-                "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]"
+                "/html/body/div[6]/div[4]/div[1]/div[4]/div[2]/form/div[2]/input[1]", 10
             ):
                 apply_btn = self.driver.find_element(
                     By.XPATH,
@@ -91,19 +102,26 @@ class CF_TC:
                 )
                 apply_btn.click()
                 time.sleep(3)
+                console.log("Apply button clicked")
+            else:
+                console.log("Apply button not found")
+                return (None, "Error while clicking apply button")
         else:
+            console.log("verdictName not found")
             return (None, "Error while filtering problem verdict")
 
         if self.wait_till_load(
-            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a"
+            "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a", 10
         ):
             content = self.driver.find_element(
                 By.XPATH,
                 "/html/body/div[6]/div[4]/div[2]/div[2]/div[6]/table/tbody/tr[2]/td[1]/a",
             )
+            console.log(f"Found submission ID: {content.text}")
             return (True, content.text)
 
         else:
+            console.log("Submission link not found")
             return (None, "Error while finding Submission ID ")
 
     def get_testcases(self, contest_id, problem_num):

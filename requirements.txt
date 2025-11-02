@@ -1,3 +1,4 @@
 Requests
 selenium
 rich
+undetected-chromedriver
