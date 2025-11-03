@@ -220,8 +220,35 @@ class CF_TC:
             return (True, tc)
         else:
             console.log("Tests div not found")
-
+        # Fallback to sample tests from problem statement
+        console.log("Falling back to sample tests from problem page")
+        samples = self._fetch_sample_tests_via_selenium(contest_id, problem_num)
+        if samples[0] and samples[1]:
+            return (True, samples[1])
         return (None, "Error while finding test cases")
+
+    def _fetch_sample_tests_via_selenium(self, contest_id: str, problem_index: str) -> Tuple[Optional[bool], List[Tuple[str, str]]]:
+        urls = [
+            f"{self.base_url}contest/{contest_id}/problem/{problem_index}",
+            f"{self.base_url}problemset/problem/{contest_id}/{problem_index}",
+        ]
+        for url in urls:
+            try:
+                self.driver.get(url)
+                if not self._wait_until_ready("//div[contains(@class,'sample-test')]", total_timeout=60, poll=1.5):
+                    continue
+                # Gather sample inputs/outputs
+                inputs = self.driver.find_elements(By.CSS_SELECTOR, "div.sample-test div.input pre, div.sample-tests div.input pre")
+                outputs = self.driver.find_elements(By.CSS_SELECTOR, "div.sample-test div.output pre, div.sample-tests div.output pre")
+                tc: List[Tuple[str, str]] = []
+                for i, o in zip(inputs, outputs):
+                    tc.append((i.text, o.text))
+                if tc:
+                    console.log(f"Total sample test cases found: {len(tc)}")
+                    return (True, tc)
+            except Exception:
+                continue
+        return (None, ["No sample tests found"]) 
 
     def wait_till_load(self, xpath_value, delay=3):
         try:
