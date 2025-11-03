@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from typing import List, Tuple, Optional
 
 import requests
@@ -25,6 +26,19 @@ class CF_TC:
         options.add_argument("--window-size=1920,1080")
         # Remove headless to allow manual interaction if needed
         # options.add_argument("--headless")
+        # Allow using your already-logged-in Chrome profile
+        user_data_dir = os.getenv("CF_CHROME_USER_DATA_DIR")  # e.g. /Users/you/Library/Application Support/Google/Chrome
+        profile_dir = os.getenv("CF_CHROME_PROFILE_DIR")      # e.g. Default or Profile 1
+        chrome_binary = os.getenv("CF_CHROME_BINARY")          # optional custom Chrome path
+        if user_data_dir:
+            options.add_argument(f"--user-data-dir={user_data_dir}")
+        if profile_dir:
+            options.add_argument(f"--profile-directory={profile_dir}")
+        if chrome_binary:
+            try:
+                options.binary_location = chrome_binary
+            except Exception:
+                pass
         self.driver = uc.Chrome(options=options, version_main=None)
         self.base_url = "https://codeforces.com/"
         self.close = self.driver.close
